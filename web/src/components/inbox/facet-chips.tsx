@@ -1,8 +1,6 @@
 "use client";
 
 import { Search, X } from "lucide-react";
-import type { AtsSource } from "@/lib/explore";
-import { ATS_LABEL } from "@/lib/explore";
 import { FRESHNESS_WINDOWS, SENIORITY_LABEL, type Seniority } from "@/lib/inbox";
 import { CostBadge } from "@/components/cost/cost-badge";
 import { cn } from "@/lib/cn";
@@ -13,15 +11,12 @@ import { cn } from "@/lib/cn";
 export function FacetChips({
   within,
   setWithin,
-  sources,
-  toggleSource,
   seniorities,
   toggleSeniority,
   locQ,
   setLocQ,
   kw,
   setKw,
-  availSources,
   availSeniorities,
   resultCount,
   totalCount,
@@ -30,15 +25,12 @@ export function FacetChips({
 }: {
   within: number | null;
   setWithin: (d: number | null) => void;
-  sources: Set<AtsSource>;
-  toggleSource: (s: AtsSource) => void;
   seniorities: Set<Seniority>;
   toggleSeniority: (s: Seniority) => void;
   locQ: string;
   setLocQ: (v: string) => void;
   kw: string;
   setKw: (v: string) => void;
-  availSources: AtsSource[];
   availSeniorities: Seniority[];
   resultCount: number;
   totalCount: number;
@@ -82,12 +74,6 @@ export function FacetChips({
             </button>
           ))}
         </div>
-
-        {availSources.map((s) => (
-          <Pill key={s} on={sources.has(s)} onClick={() => toggleSource(s)}>
-            {ATS_LABEL[s]}
-          </Pill>
-        ))}
 
         {availSeniorities.map((s) => (
           <Pill key={s} on={seniorities.has(s)} onClick={() => toggleSeniority(s)}>

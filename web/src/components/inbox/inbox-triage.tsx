@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Undo2 } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
 import type { InboxJob } from "@/lib/career-ops";
-import type { AtsSource } from "@/lib/explore";
-import { ATS_SOURCES } from "@/lib/explore";
-import { daysSince, seniorityFromTitle, sourceFromUrl, SENIORITY_ORDER, type Seniority } from "@/lib/inbox";
+import { daysSince, seniorityFromTitle, SENIORITY_ORDER, type Seniority } from "@/lib/inbox";
+import { platformCounts, platformFromUrl, platformLabel } from "@/lib/inbox-platform.mjs";
 import { FacetChips } from "./facet-chips";
 import { TriageRow, type RowScore } from "./triage-row";
 import { ShortlistTray, type ShortItem } from "./shortlist-tray";
@@ -25,8 +24,8 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const { jobs, startJob } = useJobs();
 
   // facets
-  const [within, setWithin] = useState<number | null>(null);
-  const [sources, setSources] = useState<Set<AtsSource>>(() => new Set());
+  const [within, setWithin] = useState<number | null>(7);
+  const [sources, setSources] = useState<Set<string>>(() => new Set());
   const [seniorities, setSeniorities] = useState<Set<Seniority>>(() => new Set());
   const [locQ, setLocQ] = useState("");
   const [kw, setKw] = useState("");
@@ -73,11 +72,11 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   // triages once (and Save/Skip/score, all keyed by URL, act on it coherently).
   const enriched = useMemo(() => {
     const seen = new Set<string>();
-    const out: { job: InboxJob; source: AtsSource | null; seniority: Seniority | null; age: number | null }[] = [];
+    const out: { job: InboxJob; source: string; seniority: Seniority | null; age: number | null }[] = [];
     for (const job of inbox) {
       if (seen.has(job.url)) continue;
       seen.add(job.url);
-      out.push({ job, source: sourceFromUrl(job.url), seniority: seniorityFromTitle(job.role), age: daysSince(job.postedAt, now) });
+      out.push({ job, source: platformFromUrl(job.url), seniority: seniorityFromTitle(job.role), age: daysSince(job.postedAt, now) });
     }
     return out;
   }, [inbox, now]);
@@ -98,30 +97,31 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   }, [jobs]);
 
   // facet options — only surface what's actually present in the (non-hidden) data
-  const availSources = useMemo(() => {
-    const set = new Set<AtsSource>();
-    for (const e of enriched) if (e.source && !hidden.includes(e.job.url)) set.add(e.source);
-    return ATS_SOURCES.filter((s) => set.has(s));
-  }, [enriched, hidden]);
   const availSeniorities = useMemo(() => {
     const set = new Set<Seniority>();
     for (const e of enriched) if (e.seniority && !hidden.includes(e.job.url)) set.add(e.seniority);
     return SENIORITY_ORDER.filter((s) => set.has(s));
   }, [enriched, hidden]);
 
-  const filtered = useMemo(
+  // Platform is separated from the other predicates so the composition keeps
+  // showing the comparable source mix while one platform is selected.
+  const platformBase = useMemo(
     () =>
       enriched.filter((e) => {
         if (hidden.includes(e.job.url)) return false;
         if (within != null && (e.age == null || e.age > within)) return false;
-        if (sources.size && (!e.source || !sources.has(e.source))) return false;
         if (seniorities.size && (!e.seniority || !seniorities.has(e.seniority))) return false;
         if (locQ.trim() && !(e.job.location || "").toLowerCase().includes(locQ.trim().toLowerCase())) return false;
         if (kw.trim() && !`${e.job.company} ${e.job.role}`.toLowerCase().includes(kw.trim().toLowerCase())) return false;
         return true;
       }),
-    [enriched, hidden, within, sources, seniorities, locQ, kw],
+    [enriched, hidden, within, seniorities, locQ, kw],
   );
+  const filtered = useMemo(
+    () => platformBase.filter((e) => !sources.size || sources.has(e.source)),
+    [platformBase, sources],
+  );
+  const breakdown = useMemo(() => platformCounts(platformBase, (e) => e.source), [platformBase]);
 
   // 🔴 SINGLE ORDER PLUG POINT — freshness only (newest first_seen first; unknown last).
   // A smarter ranker replaces ONLY this comparator; facets/triage/shortlist/score never
@@ -184,20 +184,28 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
       <FacetChips
         within={within}
         setWithin={setWithin}
-        sources={sources}
-        toggleSource={(s) => setSources((set) => { const n = new Set(set); n.has(s) ? n.delete(s) : n.add(s); return n; })}
         seniorities={seniorities}
         toggleSeniority={(s) => setSeniorities((set) => { const n = new Set(set); n.has(s) ? n.delete(s) : n.add(s); return n; })}
         locQ={locQ}
         setLocQ={setLocQ}
         kw={kw}
         setKw={setKw}
-        availSources={availSources}
         availSeniorities={availSeniorities}
         resultCount={filtered.length}
         totalCount={enriched.length - hiddenCount}
         anyActive={anyFacet}
         onClear={() => { setWithin(null); setSources(new Set()); setSeniorities(new Set()); setLocQ(""); setKw(""); }}
+      />
+
+      <PlatformBreakdown
+        items={breakdown}
+        total={platformBase.length}
+        selected={sources}
+        onToggle={(platform) => setSources((set) => {
+          const next = new Set(set);
+          next.has(platform) ? next.delete(platform) : next.add(platform);
+          return next;
+        })}
       />
 
       {/* batch header: fresh slice by default, or the full filtered set */}
@@ -286,5 +294,53 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         onScore={scoreShortlist}
       />
     </div>
+  );
+}
+
+function PlatformBreakdown({
+  items,
+  total,
+  selected,
+  onToggle,
+}: {
+  items: { platform: string; count: number }[];
+  total: number;
+  selected: Set<string>;
+  onToggle: (platform: string) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <section aria-label="Jobs by platform" className="mt-4 rounded-2xl border border-border bg-surface/40 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-medium text-foreground">Jobs by platform</h2>
+        <p className="text-xs text-faint tabular-nums">{total} matching role{total === 1 ? "" : "s"}</p>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map(({ platform, count }) => {
+          const share = total ? Math.round((count / total) * 100) : 0;
+          const active = selected.has(platform);
+          return (
+            <button
+              key={platform}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onToggle(platform)}
+              className={cn(
+                "rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40",
+                active ? "border-brand/50 bg-brand-soft" : "border-border bg-background/30 hover:border-brand/30",
+              )}
+            >
+              <span className="flex items-center justify-between gap-3 text-xs">
+                <span className={cn("font-medium", active ? "text-brand" : "text-foreground")}>{platformLabel(platform)}</span>
+                <span className="tabular-nums text-muted">{count} · {share}%</span>
+              </span>
+              <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-surface-hover" aria-hidden="true">
+                <span className="block h-full rounded-full bg-brand" style={{ width: `${share}%` }} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
