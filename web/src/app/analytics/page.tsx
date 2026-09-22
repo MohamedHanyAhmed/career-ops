@@ -2,6 +2,7 @@ import Link from "next/link";
 import { pipelineSummary } from "@/lib/career-ops";
 import { canonStatus, scoreNum } from "@/lib/format";
 import { cumulativeTiles } from "@/lib/funnel-tiles.mjs";
+import { decisionBand } from "@/lib/decision-state.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,29 @@ export default function Analytics() {
   // told "Interviews follow replies — keep follow-ups warm"). Mirrors
   // everInterview/everOffer in stats.mjs's computeFunnel().
   const { interviews, offers } = cumulativeTiles(applications.map((a) => canonStatus(a.status)));
+  const recommended = applications.filter((a) => decisionBand(a.score, scoreNum).key === "recommended").length;
+  const holds = applications.filter((a) => decisionBand(a.score, scoreNum).key === "hold").length;
+  const rejectedByFit = applications.filter((a) => decisionBand(a.score, scoreNum).key === "reject").length;
+  const hasReached = (status: string, stage: string) => {
+    const order = ["EVALUATED", "APPLIED", "RESPONDED", "INTERVIEW", "OFFER", "HIRED"];
+    const current = order.findIndex((s) => canonStatus(status).includes(s));
+    return current >= order.indexOf(stage);
+  };
+  const appliedRows = applications.filter((a) => hasReached(a.status, "APPLIED"));
+  const applied = appliedRows.length;
+  const recommendedApplied = appliedRows.filter((a) => decisionBand(a.score, scoreNum).key === "recommended").length;
+  const responded = applications.filter((a) => hasReached(a.status, "RESPONDED")).length;
+  const rate = (n: number, d: number) => d ? `${Math.round((n / d) * 100)}%` : "—";
+  const channels = new Map<string, { evaluated: number; recommended: number; applied: number; responses: number }>();
+  for (const a of applications) {
+    const name = a.via && a.via !== "—" ? a.via : "Unknown";
+    const row = channels.get(name) ?? { evaluated: 0, recommended: 0, applied: 0, responses: 0 };
+    row.evaluated++;
+    if (decisionBand(a.score, scoreNum).key === "recommended") row.recommended++;
+    if (hasReached(a.status, "APPLIED")) row.applied++;
+    if (hasReached(a.status, "RESPONDED")) row.responses++;
+    channels.set(name, row);
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -82,6 +106,32 @@ export default function Analytics() {
         ))}
       </Section>
 
+      <Section title="Decision quality">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricCard value={recommended} label="Recommended" detail="Score 4.0+ · eligible for approval" />
+          <MetricCard value={holds} label="Hold" detail="Score 3.5–3.9 · do not apply by default" />
+          <MetricCard value={rejectedByFit} label="Reject" detail="Below 3.5 · remove unless evidence changes" />
+        </div>
+      </Section>
+
+      <Section title="Conversion">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricCard value={rate(recommendedApplied, recommended)} label="Recommended → applied" detail={`${recommendedApplied} recommended applications / ${recommended} recommended`} />
+          <MetricCard value={rate(responded, applied)} label="Applied → response" detail={`${responded} responded / ${applied} applied`} />
+          <MetricCard value={rate(interviews, applied)} label="Applied → interview" detail={`${interviews} interviewed / ${applied} applied`} />
+        </div>
+        <p className="mt-3 text-xs text-faint">Rates use the current tracker snapshot. Time-to-response is unavailable until response timestamps are recorded.</p>
+      </Section>
+
+      <Section title="Channel yield">
+        <div className="overflow-x-auto rounded-2xl border border-border">
+          <table className="w-full min-w-[34rem] text-sm">
+            <thead className="bg-surface/60 text-left text-xs uppercase tracking-wide text-faint"><tr><th className="px-4 py-2.5">Channel</th><th className="px-4 py-2.5">Evaluated</th><th className="px-4 py-2.5">Recommended</th><th className="px-4 py-2.5">Applied</th><th className="px-4 py-2.5">Responses</th></tr></thead>
+            <tbody className="divide-y divide-border">{[...channels.entries()].sort((a,b) => b[1].evaluated-a[1].evaluated).map(([name, row]) => <tr key={name}><td className="px-4 py-3 font-medium">{name}</td><td className="px-4 py-3 tabular-nums">{row.evaluated}</td><td className="px-4 py-3 tabular-nums">{row.recommended}</td><td className="px-4 py-3 tabular-nums">{row.applied}</td><td className="px-4 py-3 tabular-nums">{row.responses}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </Section>
+
       <Section title="Score distribution">
         {buckets.map((b) => (
           <Bar key={b.label} label={b.label} value={b.n} pct={(b.n / maxBucket) * 100} total={scores.length} />
@@ -95,6 +145,10 @@ export default function Analytics() {
       </Section>
     </div>
   );
+}
+
+function MetricCard({ value, label, detail }: { value: number | string; label: string; detail: string }) {
+  return <div className="rounded-xl border border-border bg-surface/40 p-4"><p className="text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-sm font-medium">{label}</p><p className="mt-1 text-xs text-faint">{detail}</p></div>;
 }
 
 function Stat({ value, label, hint }: { value: number | string; label: string; hint?: string }) {

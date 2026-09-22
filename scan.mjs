@@ -1394,7 +1394,7 @@ const PIPELINE_CHECKBOX_STRICT_RE = /^- \[[ x]\]\s+/;
  * segment invents a city for a role and lets it resurface, while a genuine
  * location beginning `Posted: ` / `Rank: ` does not occur.
  */
-const PIPELINE_LABELED_SEGMENT_RE = /^(?:posted|trust|note|rank):\s/iu;
+const PIPELINE_LABELED_SEGMENT_RE = /^(?:posted|trust|note|rank|source):\s/iu;
 
 /**
  * The `~~…~~` wrapper an expired entry is written with.
@@ -1951,6 +1951,40 @@ export function normalizeLocationForDedup(location) {
   return [...places].sort().join('+');
 }
 
+const COUNTRY_LOCATION_KEYS = new Set([
+  'egypt', 'libya', 'uae', 'ksa', 'qatar', 'kuwait', 'bahrain', 'oman',
+  'uk', 'us', 'canada', 'germany', 'france', 'spain', 'italy',
+]);
+
+/** A deliberately small alias layer for cross-source location comparison. */
+export function normalizeLocationForComparison(location) {
+  if (typeof location !== 'string') return '';
+  return normalizeLocationForDedup(location)
+    .replace(/united arab emirates/g, 'uae')
+    .replace(/u a e/g, 'uae')
+    .replace(/saudi arabia/g, 'ksa')
+    .replace(/united kingdom/g, 'uk')
+    .replace(/united states(?: of america)?/g, 'us')
+    .replace(/\b(abu dhabi|dubai) emirate\b/g, '$1')
+    .replace(/\b(governorate|province|region)\b/g, '')
+    .split('+')
+    .map((place) => [...new Set(place.split(/\s+/).filter(Boolean))].join(' '))
+    .filter(Boolean)
+    .sort()
+    .join('+');
+}
+
+export function locationsEquivalentForDedup(left, right) {
+  const a = normalizeLocationForComparison(left);
+  const b = normalizeLocationForComparison(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const aTokens = new Set(a.split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const bTokens = new Set(b.split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const countryOnly = (small, large) => small.size === 1 && COUNTRY_LOCATION_KEYS.has([...small][0]) && [...small].every((token) => large.has(token));
+  return countryOnly(aTokens, bTokens) || countryOnly(bTokens, aTokens);
+}
+
 /**
  * Build the canonical company+role dedupe key.
  *
@@ -2031,7 +2065,7 @@ export function companyRoleDedupKey(company, role, canonicalize = defaultCompany
  *   {@link loadDedupSnapshot} for what reads it.
  * @returns {Set<string>} Existing company+role dedupe keys.
  */
-export function collectSeenCompanyRoles(sources = {}, policy = {}, canonicalize = defaultCompanyNormalizer, { includeLocation = false, locatedBases = null } = {}) {
+export function collectSeenCompanyRoles(sources = {}, policy = {}, canonicalize = defaultCompanyNormalizer, { includeLocation = false, locatedBases = null, locatedLocations = null } = {}) {
   const { applicationsText = '', scanHistoryText = '', pipelineText = '' } = sources;
   const seen = new Set();
   const add = (company, role, location) => {
@@ -2051,7 +2085,14 @@ export function collectSeenCompanyRoles(sources = {}, policy = {}, canonicalize 
     // location, so the set stays empty and every reader of it is inert.
     if (locatedBases && includeLocation) {
       const base = companyRoleDedupKey(c, r, canonicalize);
-      if (key !== base) locatedBases.add(base);
+      if (key !== base) {
+        locatedBases.add(base);
+        if (locatedLocations) {
+          const values = locatedLocations.get(base) ?? new Set();
+          values.add(String(location));
+          locatedLocations.set(base, values);
+        }
+      }
     }
   };
 
@@ -2242,6 +2283,10 @@ export function formatPipelineOffer(offer) {
   // posted:, before note:, for a stable serialization.
   const trust = formatTrustSegment(offer);
   if (trust) line = `${line} | ${trust}`;
+  // Preserve discovery attribution into the evaluation handoff. The tracker
+  // can then measure LinkedIn/WUZZUF/direct-board yield honestly.
+  const source = offer.emitSource === true && typeof offer.source === 'string' ? sanitizeMarkdownField(offer.source) : '';
+  if (source) line = `${line} | source: ${source}`;
   // Optional free-text ranking signal (e.g. a curated-list flag an importer
   // attaches). Labeled — not positional like location/compensation — so it can
   // ride on any row shape (bare URL, 3-, 4-, or 5-column) without a reader
@@ -2366,9 +2411,10 @@ export function loadDedupSnapshot(policy = {}, canonicalize = defaultCompanyNorm
   // It makes the wildcard rule symmetric in O(1) — see the dedupe check in
   // main() for the direction it closes. Empty whenever the flag is off.
   const seenCompanyRoleBases = new Set();
-  const seenCompanyRoles = collectSeenCompanyRoles({ applicationsText, scanHistoryText, pipelineText }, policy, canonicalize, { includeLocation, locatedBases: seenCompanyRoleBases });
+  const seenCompanyRoleLocations = new Map();
+  const seenCompanyRoles = collectSeenCompanyRoles({ applicationsText, scanHistoryText, pipelineText }, policy, canonicalize, { includeLocation, locatedBases: seenCompanyRoleBases, locatedLocations: seenCompanyRoleLocations });
   const fingerprintHistory = collectFingerprintHistory(scanHistoryText);
-  return { seen, recheckEligible, seenCompanyRoles, seenCompanyRoleBases, fingerprintHistory };
+  return { seen, recheckEligible, seenCompanyRoles, seenCompanyRoleBases, seenCompanyRoleLocations, fingerprintHistory };
 }
 
 // Standard skeleton created on fresh install — matches the format documented
@@ -2961,7 +3007,32 @@ async function main() {
   // Derived by the same helper so the hint and the filter cannot disagree.
   const earlyStopSinceMs = resolveEarlyStopMs(effectiveAfter, config.max_posting_age_days);
   const salaryFilter = buildSalaryFilter(config.salary_filter);
-  const trustValidator = buildTrustValidator(config.trust_filter);
+  // A configured job board is a legitimate intermediary: its posting URLs
+  // naturally do not contain each employer's name. Feed those hostnames to
+  // the trust validator so the company/domain rule still catches random
+  // domains without falsely penalising every board-sourced job.
+  const boardIntermediaryDomains = boards
+    .filter(board => board && typeof board === 'object' && board.enabled !== false)
+    .flatMap(board => {
+      if (typeof board.careers_url !== 'string') return [];
+      try {
+        return [new URL(board.careers_url).hostname.toLowerCase()];
+      } catch {
+        return [];
+      }
+    });
+  const trustConfig = config.trust_filter && typeof config.trust_filter === 'object'
+    ? {
+        ...config.trust_filter,
+        intermediary_allowlist: [
+          ...(Array.isArray(config.trust_filter.intermediary_allowlist)
+            ? config.trust_filter.intermediary_allowlist
+            : []),
+          ...boardIntermediaryDomains,
+        ],
+      }
+    : config.trust_filter;
+  const trustValidator = buildTrustValidator(trustConfig);
   const contentFilter = buildContentFilter(config.content_filter);
   const candidateCountry = loadCandidateCountry();
   const countryEligibilityFilter = buildCountryEligibilityFilter(config.country_eligibility_filter, candidateCountry);
@@ -3038,6 +3109,7 @@ async function main() {
   const seenUrls = dedupSnapshot.seen;
   const seenCompanyRoles = dedupSnapshot.seenCompanyRoles;
   const seenCompanyRoleBases = dedupSnapshot.seenCompanyRoleBases ?? new Set();
+  const seenCompanyRoleLocations = dedupSnapshot.seenCompanyRoleLocations ?? new Map();
 
   // 5. Fetch from each target
   // LOCAL day. This one value does two things that both care which day it is:
@@ -3250,7 +3322,8 @@ async function main() {
           key !== null && (
             seenCompanyRoles.has(key) ||
             seenCompanyRoles.has(baseKey) ||
-            (key === baseKey && seenCompanyRoleBases.has(baseKey))
+            (key === baseKey && seenCompanyRoleBases.has(baseKey)) ||
+            (key !== baseKey && [...(seenCompanyRoleLocations.get(baseKey) ?? [])].some((location) => locationsEquivalentForDedup(location, job.location)))
           )
         ) {
           totalDupes++;
@@ -3272,7 +3345,12 @@ async function main() {
         seenUrls.add(dedupUrl);
         if (key !== null) {
           seenCompanyRoles.add(key);
-          if (key !== baseKey) seenCompanyRoleBases.add(baseKey);
+          if (key !== baseKey) {
+            seenCompanyRoleBases.add(baseKey);
+            const values = seenCompanyRoleLocations.get(baseKey) ?? new Set();
+            values.add(String(job.location ?? ''));
+            seenCompanyRoleLocations.set(baseKey, values);
+          }
         }
         // Tag with the company's careers domain so verify can offer a 404/410
         // rediscovery fallback. A null domain (no careers_url) marks the offer
@@ -3281,6 +3359,7 @@ async function main() {
         newOffers.push({
           ...job,
           source: sourceName,
+          emitSource: true,
           tracked: Boolean(careersUrlDomain),
           careersUrlDomain,
         });

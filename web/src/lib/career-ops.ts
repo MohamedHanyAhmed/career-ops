@@ -159,6 +159,8 @@ export type Application = {
   pdf: string;
   report: string;
   notes: string;
+  location: string;
+  url: string;
 };
 
 /**

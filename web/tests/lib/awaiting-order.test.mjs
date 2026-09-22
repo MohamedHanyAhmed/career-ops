@@ -10,7 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pickAwaitingDecision } from "../../src/lib/home/awaiting.mjs";
+import { pickAwaitingDecision, pickDecisionQueue } from "../../src/lib/home/awaiting.mjs";
 
 // The real parser is lib/format.ts's scoreNum, which a .mjs test cannot import.
 // This stub must stay behaviourally identical for the cases below: a leading
@@ -22,12 +22,28 @@ const scoreOf = (s) => {
 
 const row = (date, score, status = "Evaluated") => ({ date, score, status, company: `${date}|${score}` });
 
-test("only scored-but-undecided rows are offered", () => {
-  const rows = [row("2026-08-20", "4.0/5"), row("2026-08-21", "4.0/5", "Applied"), row("2026-08-22", "4.0/5", "Rejected")];
+test("only recommended, scored-but-undecided rows are offered", () => {
+  const rows = [row("2026-08-20", "4.0/5"), row("2026-08-19", "3.9/5"), row("2026-08-21", "4.0/5", "Applied"), row("2026-08-22", "4.0/5", "Rejected")];
   assert.deepEqual(
     pickAwaitingDecision(rows, scoreOf).map((r) => r.date),
     ["2026-08-20"],
   );
+});
+
+test("hold jobs are visible in their own queue without leaking into recommended", () => {
+  const rows = [
+    row("2026-08-22", "4.0/5"),
+    row("2026-08-21", "3.9/5"),
+    row("2026-08-20", "3.5/5"),
+    row("2026-08-19", "3.4/5"),
+  ];
+  assert.deepEqual(pickAwaitingDecision(rows, scoreOf).map((r) => r.score), ["4.0/5"]);
+  assert.deepEqual(pickDecisionQueue(rows, scoreOf, "hold").map((r) => r.score), ["3.9/5", "3.5/5"]);
+});
+
+test("a hold job stops being actionable after its tracker status changes", () => {
+  const rows = [row("2026-08-21", "3.8/5", "Applied"), row("2026-08-20", "3.8/5", "Evaluated")];
+  assert.deepEqual(pickDecisionQueue(rows, scoreOf, "hold").map((r) => r.date), ["2026-08-20"]);
 });
 
 test("the status match is a case-insensitive prefix, so a dated or lowercase Evaluated still counts", () => {
@@ -39,7 +55,7 @@ test("the status match is a case-insensitive prefix, so a dated or lowercase Eva
 
 test("newest first, whatever order the tracker file happens to be in", () => {
   // Deliberately supplied oldest-first: this is the case #3529 can reshuffle.
-  const rows = [row("2026-08-01", "3.0/5"), row("2026-08-30", "3.0/5"), row("2026-08-15", "3.0/5")];
+  const rows = [row("2026-08-01", "4.0/5"), row("2026-08-30", "4.0/5"), row("2026-08-15", "4.0/5")];
   assert.deepEqual(
     pickAwaitingDecision(rows, scoreOf).map((r) => r.date),
     ["2026-08-30", "2026-08-15", "2026-08-01"],
@@ -47,10 +63,10 @@ test("newest first, whatever order the tracker file happens to be in", () => {
 });
 
 test("the score breaks a same-day tie so the better offer leads", () => {
-  const rows = [row("2026-08-20", "3.0/5"), row("2026-08-20", "4.7/5"), row("2026-08-20", "4.1/5")];
+  const rows = [row("2026-08-20", "4.0/5"), row("2026-08-20", "4.7/5"), row("2026-08-20", "4.1/5")];
   assert.deepEqual(
     pickAwaitingDecision(rows, scoreOf).map((r) => r.score),
-    ["4.7/5", "4.1/5", "3.0/5"],
+    ["4.7/5", "4.1/5", "4.0/5"],
   );
 });
 
@@ -58,26 +74,23 @@ test("an undated row sorts last even with the highest score", () => {
   // Two negations deep: "" compares LESS than any date, and the comparison is
   // descending, so least lands at the end. Getting this backwards would put
   // every malformed row at the top of the user's action queue, silently.
-  const rows = [row("2026-08-01", "1.0/5"), row("", "5.0/5")];
+  const rows = [row("2026-08-01", "4.0/5"), row("", "5.0/5")];
   assert.deepEqual(
     pickAwaitingDecision(rows, scoreOf).map((r) => r.score),
-    ["1.0/5", "5.0/5"],
+    ["4.0/5", "5.0/5"],
   );
 });
 
-test("two unscored rows do not produce a NaN comparator", () => {
-  // rank() returns -1 rather than -Infinity precisely so this subtraction stays
-  // finite; -Infinity - -Infinity is NaN and leaves the sort order undefined.
+test("unscored rows are not actionable", () => {
   const rows = [row("2026-08-20", ""), row("2026-08-20", "n/a")];
   const out = pickAwaitingDecision(rows, scoreOf);
-  assert.equal(out.length, 2);
-  assert.equal(out.every((r) => r && typeof r.date === "string"), true);
+  assert.equal(out.length, 0);
 });
 
 test("the limit truncates AFTER sorting, never before", () => {
   // The whole point: slicing an unsorted list is what made the card set a
   // property of the file rather than of the queue.
-  const rows = Array.from({ length: 10 }, (_, i) => row(`2026-08-${String(i + 1).padStart(2, "0")}`, "3.0/5"));
+  const rows = Array.from({ length: 10 }, (_, i) => row(`2026-08-${String(i + 1).padStart(2, "0")}`, "4.0/5"));
   assert.deepEqual(
     pickAwaitingDecision(rows, scoreOf, 3).map((r) => r.date),
     ["2026-08-10", "2026-08-09", "2026-08-08"],
@@ -87,7 +100,7 @@ test("the limit truncates AFTER sorting, never before", () => {
 test("the caller's array is not reordered underneath it", () => {
   // `applications` is shared with the pipeline table and the analytics tiles;
   // sorting it in place would reorder those too, from a memo in the Today page.
-  const rows = [row("2026-08-01", "3.0/5"), row("2026-08-30", "3.0/5")];
+  const rows = [row("2026-08-01", "4.0/5"), row("2026-08-30", "4.0/5")];
   pickAwaitingDecision(rows, scoreOf);
   assert.deepEqual(rows.map((r) => r.date), ["2026-08-01", "2026-08-30"]);
 });
@@ -102,7 +115,7 @@ test("every alias that means EVALUATED is offered, not just the English one", ()
     "Evaluated", "Evaluada", "Evaluado", "Condicional",
     "Hold", "Evaluar", "Verificar", "değerlendirildi", "Degerlendirildi",
   ];
-  const rows = aliases.map((s, i) => row(`2026-08-${String(i + 1).padStart(2, "0")}`, "3.0/5", s));
+  const rows = aliases.map((s, i) => row(`2026-08-${String(i + 1).padStart(2, "0")}`, "4.0/5", s));
   assert.equal(
     pickAwaitingDecision(rows, scoreOf, aliases.length).length,
     aliases.length,

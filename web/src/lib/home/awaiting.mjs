@@ -1,4 +1,5 @@
 import { canonStatus } from "../status-alias.mjs";
+import { decisionBand } from "../decision-state.mjs";
 
 // states.yml forbids a date in the status cell, but real trackers carry one
 // anyway ("Evaluated 2026-08-21") and /^evaluat/i tolerated that. canonStatus()
@@ -39,6 +40,10 @@ const baseStatus = (s) => String(s ?? "").replace(/\s+\d{4}-\d{2}-\d{2}\s*$/, ""
  * @returns {T[]}
  */
 export function pickAwaitingDecision(applications, scoreOf, limit = 6) {
+  return pickDecisionQueue(applications, scoreOf, "recommended", limit);
+}
+
+export function pickDecisionQueue(applications, scoreOf, band, limit = 6) {
   // -1, not -Infinity: two unscored rows would subtract to NaN, and a NaN
   // comparator leaves the sort order undefined rather than merely arbitrary.
   const rank = (s) => {
@@ -53,7 +58,11 @@ export function pickAwaitingDecision(applications, scoreOf, limit = 6) {
     // rendered an EMPTY queue — the same silent-hiding failure this module
     // exists to fix. status-alias.mjs is the single alias table and its test
     // loads states.yml, so this cannot drift as a literal regex does.
-    .filter((a) => canonStatus(baseStatus(a.status)) === "EVALUATED")
+    .filter(
+      (a) =>
+        canonStatus(baseStatus(a.status)) === "EVALUATED" &&
+        decisionBand(a.score, scoreOf).key === band,
+    )
     // A row with no date sorts LAST rather than jumping the queue. "" compares
     // LESS than any real date, and the comparison is descending (b before a),
     // so "least" lands at the end — which is where an undated row belongs in a

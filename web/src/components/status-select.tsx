@@ -47,7 +47,7 @@ export function StatusSelect({ n, current }: { n: string; current: string }) {
         className="rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-foreground outline-none transition-colors focus:border-brand/50 disabled:opacity-50 max-sm:min-h-[44px]"
       >
         {!known && <option value={status}>{status}</option>}
-        {CANONICAL_STATES.map((s) => (
+        {CANONICAL_STATES.filter((s) => s !== "Applied" || status === "Applied").map((s) => (
           <option key={s} value={s}>
             {s}
           </option>

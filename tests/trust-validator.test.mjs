@@ -408,6 +408,28 @@ section('buildTrustValidator — custom ATS allowlist');
 {
   const v = buildTrustValidator({
     enabled: true,
+    intermediary_allowlist: ['wuzzuf.net'],
+  });
+  const r = v({
+    url: 'https://wuzzuf.net/jobs/p/example-business-operations-coordinator',
+    company: 'Advanced Control',
+  });
+  assert(r.score === 100, 'trusted job-board intermediary → 100');
+  assert(!r.flags.includes('company_domain_mismatch'), 'trusted intermediary → no mismatch');
+}
+
+{
+  const v = buildTrustValidator({
+    enabled: true,
+    intermediary_allowlist: ['wuzzuf.net'],
+  });
+  const r = v({ url: 'https://random-careers.xyz/jobs/1', company: 'Advanced Control' });
+  assert(r.flags.includes('company_domain_mismatch'), 'unconfigured intermediary still mismatches');
+}
+
+{
+  const v = buildTrustValidator({
+    enabled: true,
     ats_allowlist: ['custom-ats.io'],
   });
   // Default ATS (greenhouse) is no longer in the allowlist, and "test" is not

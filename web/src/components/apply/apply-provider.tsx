@@ -264,6 +264,9 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
           } else if (ev.t === "done") {
             got = true;
             applyAnswers(ev.answers ?? {});
+            if ((ev.count ?? 0) > 0 && nRef.current) {
+              void fetch("/api/decisions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: nRef.current, event: "form-prepared" }) });
+            }
             if ((ev.count ?? 0) === 0) setError("The planner returned 0 answers — see the diagnostics log below.");
             else if (ev.truncated) setError("The planner was cut off — some fields were recovered, others may be blank. See diagnostics.");
           } else if (ev.t === "error") {

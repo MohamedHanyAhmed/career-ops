@@ -11,10 +11,36 @@ function cvPath() {
 const MAX_CV_BYTES = 200_000;
 
 export async function GET() {
+  const file = cvPath();
   try {
-    return NextResponse.json({ content: fs.readFileSync(cvPath(), "utf8"), exists: true });
-  } catch {
-    return NextResponse.json({ content: "", exists: false });
+    const revisions = fs.readdirSync(path.dirname(file))
+      .filter((name) => name.startsWith("cv.md.bak-") && fs.statSync(path.join(path.dirname(file), name)).isFile())
+      .sort().reverse().slice(0, 20)
+      .map((name) => ({ name, createdAt: name.slice("cv.md.bak-".length).replace(/-(\d{3})Z$/, ".$1Z") }));
+    return NextResponse.json({ content: fs.readFileSync(file, "utf8"), exists: true, revisions });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT" && !fs.existsSync(file)) {
+      return NextResponse.json({ content: "", exists: false, revisions: [] });
+    }
+    return NextResponse.json({ error: "CV could not be read. Check the file and folder permissions." }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  let body: { revision?: string };
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "bad json" }, { status: 400 }); }
+  const revision = String(body.revision ?? "");
+  if (!/^cv\.md\.bak-[A-Za-z0-9.-]+$/.test(revision)) return NextResponse.json({ error: "invalid revision" }, { status: 400 });
+  const dir = path.dirname(cvPath());
+  const source = path.join(dir, revision);
+  if (path.dirname(source) !== dir) return NextResponse.json({ error: "invalid revision" }, { status: 400 });
+  try {
+    const restored = fs.readFileSync(source, "utf8");
+    atomicWriteWithBackup(cvPath(), restored);
+    return NextResponse.json({ ok: true, content: restored });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return NextResponse.json({ error: "revision not found" }, { status: 404 });
+    return NextResponse.json({ error: "revision could not be read" }, { status: 500 });
   }
 }
 

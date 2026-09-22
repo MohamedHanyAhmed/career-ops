@@ -11,6 +11,7 @@ import { canonStatus, scoreNum, scoreTone, statusDot } from "@/lib/format";
 import { InboxTriage } from "@/components/inbox/inbox-triage";
 import { cn } from "@/lib/cn";
 import { companyPresentation, companySearchText } from "@/lib/company-presentation.mjs";
+import { decisionBand } from "@/lib/decision-state.mjs";
 
 // INBOX (the triage queue) is the default tab; the rest filter the tracker.
 const TABS = [
@@ -144,7 +145,7 @@ export function PipelineView({
       </div>
 
       {/* tabs */}
-      <div className="mt-6 flex flex-wrap gap-1 border-b border-border">
+      <div className="mt-6 flex gap-1 overflow-x-auto border-b border-border pb-px [scrollbar-width:thin]">
         {TABS.map((t) => {
           const count =
             t === "INBOX"
@@ -199,7 +200,8 @@ export function PipelineView({
            but a table too wide for the viewport can now be scrolled to instead
            of being silently cut off. min-w keeps the columns readable rather
            than letting w-full crush them on a phone. */
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-border">
+        <>
+        <div className="mt-4 hidden overflow-x-auto rounded-2xl border border-border sm:block">
           <table className="w-full min-w-[44rem] text-sm">
             <thead className="bg-surface/60 text-left text-xs uppercase tracking-wide text-faint">
               <tr>
@@ -247,6 +249,30 @@ export function PipelineView({
             </tbody>
           </table>
         </div>
+        <div className="mt-4 grid gap-3 sm:hidden">
+          {filtered.map((r, i) => {
+            const company = companyPresentation(r);
+            const decision = decisionBand(r.score, scoreNum);
+            return (
+              <Link key={`${r.n}-mobile-${i}`} href={`/pipeline/${r.n}`} className="rounded-2xl border border-border bg-surface/40 p-4 transition hover:border-brand/40">
+                <div className="flex items-start gap-3">
+                  <CompanyLogo name={company.logoName} size={28} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{company.label}</p>
+                    <p className="mt-0.5 text-sm text-muted">{r.role}</p>
+                  </div>
+                  <Badge tone={scoreTone(r.score)}>{r.score || "—"}</Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1.5 text-muted"><span className={cn("size-1.5 rounded-full", statusDot(r.status))} />{r.status}</span>
+                  <span className={cn("rounded-full px-2 py-0.5", decision.key === "recommended" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : decision.key === "hold" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-surface-hover text-muted")}>{decision.label}</span>
+                  <span className="ml-auto tabular-nums text-faint">{r.date}</span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+        </>
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-border bg-surface/30 px-6 py-12 text-center">
           <p className="font-display text-lg">No matches</p>

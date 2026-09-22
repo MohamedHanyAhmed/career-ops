@@ -177,6 +177,8 @@ export function companyMatchesHostname(company, hostname) {
  * @param {boolean} [config.enabled]
  * @param {string[]} [config.suspicious_domains]
  * @param {string[]} [config.ats_allowlist]
+ * @param {string[]} [config.intermediary_allowlist] Trusted job-board and
+ *   marketplace domains that legitimately host postings for many companies.
  * @returns {(job: { url?: string, company?: string }) => { score: number, flags: string[], level: 'high' | 'medium' | 'low' }}
  */
 export function buildTrustValidator(config) {
@@ -196,6 +198,14 @@ export function buildTrustValidator(config) {
     : DEFAULT_ATS_ALLOWLIST)
     .map(d => String(d).toLowerCase().trim())
     .filter(Boolean);
+
+  const intermediaryAllowlist = (Array.isArray(config.intermediary_allowlist)
+    ? config.intermediary_allowlist
+    : [])
+    .map(d => String(d).toLowerCase().trim())
+    .filter(Boolean);
+
+  const trustedPostingHosts = [...new Set([...atsAllowlist, ...intermediaryAllowlist])];
 
   return (job) => {
     /** @type {string[]} */
@@ -239,9 +249,11 @@ export function buildTrustValidator(config) {
       score -= PENALTIES.suspicious_domain;
     }
 
-    // Rule 4 — Company ↔ domain mismatch (skip for ATS-hosted URLs)
+    // Rule 4 — Company ↔ domain mismatch. Skip domains that are configured
+    // ATS or job-board intermediaries: they legitimately host postings for
+    // companies whose names cannot match the intermediary hostname.
     const company = typeof job.company === 'string' ? job.company.trim() : '';
-    if (company && !matchesDomainList(hostname, atsAllowlist)) {
+    if (company && !matchesDomainList(hostname, trustedPostingHosts)) {
       if (!companyMatchesHostname(company, hostname)) {
         flags.push('company_domain_mismatch');
         score -= PENALTIES.company_domain_mismatch;

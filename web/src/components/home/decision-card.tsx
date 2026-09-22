@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Check, X, FileText, Loader2 } from "lucide-react";
+import { X, FileText, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CompanyLogo } from "@/components/company-logo";
 import { scoreNum, scoreTone } from "@/lib/format";
@@ -14,20 +14,24 @@ import type { Application } from "@/lib/career-ops";
 // opens the report (PDF + Apply live there). Skip / Applied still write status.
 export function DecisionCard({ app }: { app: Application }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<"" | "Applied" | "Discarded">("");
+  const [busy, setBusy] = useState<"" | "Discarded">("");
   const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState("");
   const score = scoreNum(app.score);
   const tone = scoreTone(app.score);
   const company = companyPresentation(app);
 
-  const setStatus = async (status: "Applied" | "Discarded") => {
+  const setStatus = async (status: "Discarded") => {
     setBusy(status);
+    setError("");
     try {
-      await fetch("/api/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: app.n, status }) });
+      const res = await fetch("/api/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: app.n, status }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Could not update this role");
       setDone(status);
       router.refresh();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update this role");
     } finally {
       setBusy("");
     }
@@ -55,8 +59,6 @@ export function DecisionCard({ app }: { app: Application }) {
         )}
       </div>
       <div className="flex items-center gap-2">
-        {/* Primary is the report (PDF + Apply live there). Marking Applied from
-            Today skipped that path and wrote a status with no application. */}
         <Link
           href={`/pipeline/${app.n}`}
           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand-text transition hover:bg-brand/15 max-sm:min-h-[44px]"
@@ -71,17 +73,8 @@ export function DecisionCard({ app }: { app: Application }) {
         >
           {busy === "Discarded" ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />} Skip
         </button>
-        <button
-          type="button"
-          disabled={!!busy}
-          onClick={() => setStatus("Applied")}
-          title="Record Applied without opening the apply flow"
-          className="inline-flex shrink-0 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-faint transition hover:text-foreground disabled:opacity-60 max-sm:min-h-[44px]"
-        >
-          {busy === "Applied" ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-          Applied
-        </button>
       </div>
+      {error && <p role="alert" className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400"><AlertCircle className="size-3.5" />{error}</p>}
     </div>
   );
 }

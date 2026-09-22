@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { readReport, findApplication, pdfReadyForReport, trackerCanDelete } from "@/lib/career-ops";
 import { resolveTailoredCover } from "@/lib/apply/cover";
 import { ReportView } from "@/components/report-view";
+import { buildDecisionContext, readDecisionState } from "@/lib/core/decision-log";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       canDelete={trackerCanDelete()}
       pdfReadyFromIndex={await pdfReadyForReport(id)}
       coverReady={coverReady}
+      decisionState={readDecisionState(id, buildDecisionContext({ url: app?.url, score: app?.score, report: report?.content }))}
     />
   );
 }

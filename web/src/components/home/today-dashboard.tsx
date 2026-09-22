@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, CircleHelp, Sparkles, ArrowRight } from "lucide-react";
+import { Bell, CircleHelp, Sparkles, ArrowRight, PauseCircle } from "lucide-react";
 import { instrumentSerif } from "@/lib/fonts";
 import { HeroGlow } from "@/components/hero-glow";
 import type { Application, InboxJob } from "@/lib/career-ops";
@@ -13,7 +13,7 @@ import { FollowUpCard, type FollowUp } from "@/components/home/follow-up-card";
 import { DecisionCard } from "@/components/home/decision-card";
 import { QuickEvaluate } from "@/components/quick-evaluate";
 import { scoreNum } from "@/lib/format";
-import { pickAwaitingDecision } from "@/lib/home/awaiting.mjs";
+import { pickAwaitingDecision, pickDecisionQueue } from "@/lib/home/awaiting.mjs";
 
 // The retention "Today": a dual-loop action queue (the maintainer's
 // "N new matches this week · M follow-ups due"). SUPPLY loop = fresh free-scan
@@ -78,9 +78,10 @@ export function TodayDashboard({
   // ordering lives in lib/home/awaiting.mjs so it can be tested — see the file
   // for why "first six in the array" was a bug waiting for #3529.
   const awaiting = useMemo(() => pickAwaitingDecision(applications, scoreNum), [applications]);
+  const holds = useMemo<Application[]>(() => pickDecisionQueue(applications, scoreNum, "hold"), [applications]);
 
   const newThisWeek = freshCount;
-  const allClear = newThisWeek === 0 && overdue === 0 && awaiting.length === 0;
+  const allClear = newThisWeek === 0 && overdue === 0 && awaiting.length === 0 && holds.length === 0;
   const inboxUrls = useMemo(() => new Set(inbox.map((j) => j.url)), [inbox]);
 
   return (
@@ -108,6 +109,12 @@ export function TodayDashboard({
                   <>
                     <span className="text-brand tabular-nums">{overdue}</span> follow-up{overdue === 1 ? "" : "s"} due
                   </>
+                )}
+                {newThisWeek === 0 && overdue === 0 && awaiting.length > 0 && (
+                  <><span className="text-brand tabular-nums">{awaiting.length}</span> recommended role{awaiting.length === 1 ? "" : "s"} need your decision</>
+                )}
+                {newThisWeek === 0 && overdue === 0 && awaiting.length === 0 && holds.length > 0 && (
+                  <><span className="text-brand tabular-nums">{holds.length}</span> held role{holds.length === 1 ? "" : "s"} need closure</>
                 )}
               </>
             )}
@@ -155,11 +162,19 @@ export function TodayDashboard({
 
       {/* B. Awaiting your decision */}
       {awaiting.length > 0 && (
-        <Section icon={CircleHelp} title="Awaiting your decision" hint="Scored — apply or skip">
+        <Section icon={CircleHelp} title="Recommended for review" hint="Score 4.0+ · you approve every next step">
           <div className="grid gap-2.5 sm:grid-cols-2">
             {awaiting.map((a) => (
               <DecisionCard key={a.n} app={a} />
             ))}
+          </div>
+        </Section>
+      )}
+
+      {holds.length > 0 && (
+        <Section icon={PauseCircle} title="Hold — decide or discard" hint="Score 3.5–3.9 · revisit only with new evidence">
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            {holds.map((a) => <DecisionCard key={a.n} app={a} />)}
           </div>
         </Section>
       )}

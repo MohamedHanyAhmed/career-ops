@@ -34,7 +34,7 @@ Read `spend_tier` from `config/profile.yml` (see `modes/_shared.md` -- Spend Tie
    b. If the URL is not accessible → mark as `- [!]` with a note and continue
    c. **Pre-screen gate**: apply the gate above (using the extracted JD). If the JD is an obvious mismatch, log the discard to `data/discard.log` (per the **Discard log** rule above — three fields, no job ID in interactive mode), mark it `- [x] #-- | {url} | skipped (pre-screen mismatch: {reason})` in "Processed", and continue to the next URL. No `REPORT_NUM` is claimed for discarded postings.
    d. Claim the next sequential `REPORT_NUM` atomically by running `node reserve-report-num.mjs` (and release the sentinel using `node reserve-report-num.mjs --release <num>` after the report is written)
-   e. **Execute full auto-pipeline**: Evaluation A-F → Report .md → CV output per `cv.output_format` (auto-pipeline Step 3) → Tracker. Read `modes/_custom.md` → Pipeline Rules, if it exists, and apply its override here. Default (if absent or silent): standard pipeline execution.
+   e. **Execute full auto-pipeline**: Evaluation A-F → Report .md → CV output per `cv.output_format` (auto-pipeline Step 3) → Tracker. If the pending row carries a labeled `source: {channel}` segment, preserve `{channel}` in the report's `Via` field and the tracker addition's `via` field; never replace a known discovery source with `Direct`. Read `modes/_custom.md` → Pipeline Rules, if it exists, and apply its override here. Default (if absent or silent): standard pipeline execution.
    f. **Move from "Pending" to "Processed"**: `- [x] #NNN | URL | Company | Role | Score/5 | PDF ✅/❌`
 
    **Choosing the CV output:** This step is `modes/auto-pipeline.md` → Step 3, not a second rule. Read `config/profile.yml` → `cv.output_format` and route on it: `"latex"` → `modes/latex.md`, `"text"` → `modes/text.md`, otherwise (default) → `modes/pdf.md`. The `latex` and `text` routes never produce HTML or a PDF, whatever the score — mark PDF ❌ in the tracker and the summary table. The PDF gate below narrows the default route only; it is not a way to override the format the candidate configured.
@@ -74,7 +74,7 @@ entries add `| {company} | {title}` (3 columns) plus two optional trailing
 columns: `| {location}` (4th) and `| {compensation}` (5th). The scanner fills the
 trailing columns only when the ATS exposes them, so 1-, 3-, 4-, and 5-column rows
 are all valid — `{url} | {company} | {title} | {location} | {compensation}` is the
-maximum (canonical) shape, not the only one. The columns are positional, so a row
+maximum positional shape, not the only one. Labeled metadata such as `posted:`, `trust:`, `source:`, `rank:`, and `note:` may follow those columns. The columns are positional, so a row
 carrying compensation always includes the location cell (empty if unknown); a row
 with only a location stays 4 columns. Existing shorter rows remain valid and are
 read as having empty values for the missing trailing columns.

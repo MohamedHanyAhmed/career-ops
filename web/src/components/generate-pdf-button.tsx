@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { FileDown, Loader2, FileText, RotateCcw } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
@@ -10,14 +10,28 @@ import { CostBadge } from "@/components/cost/cost-badge";
 // ATS-optimized CV tailored to THIS offer → output/cv-… + marks the tracker.
 // Once a tailored CV exists (tracker PDF ✅, or a pdf worker just finished), it
 // becomes a "View tailored CV" link (served by /api/cv-pdf) + a regenerate icon.
-export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company: string; pdfReady: boolean }) {
+export function GeneratePdfButton({ n, company, pdfReady, approved }: { n: string; company: string; pdfReady: boolean; approved: boolean }) {
   const { jobs, startJob } = useJobs();
+  const [locallyApproved, setLocallyApproved] = useState(approved);
+  const [error, setError] = useState("");
+  const [approving, setApproving] = useState(false);
   const job = useMemo(
     () => jobs.filter((j) => j.kind === "pdf" && j.input === n).sort((a, b) => b.startedAt - a.startedAt)[0],
     [jobs, n],
   );
   const generate = () =>
     startJob({ title: `CV PDF · ${company}`, subtitle: "tailored for this role", kind: "pdf", input: n, page: `/pipeline/${n}` });
+  const approveAndGenerate = async () => {
+    setApproving(true); setError("");
+    try {
+      const res = await fetch("/api/decisions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n, event: "tailoring-approved" }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Approval could not be recorded");
+      setLocallyApproved(true);
+      generate();
+    } catch (e) { setError(e instanceof Error ? e.message : "Approval could not be recorded"); }
+    finally { setApproving(false); }
+  };
 
   if (job?.status === "running")
     return (
@@ -39,7 +53,8 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
           <FileText className="size-3.5" /> View tailored CV
         </a>
         <button
-          onClick={generate}
+        onClick={locallyApproved ? generate : approveAndGenerate}
+        disabled={approving}
           title="Regenerate the tailored CV"
           className="inline-flex items-center justify-center rounded-full p-1 text-faint transition-colors hover:text-brand max-sm:min-h-[44px] max-sm:min-w-[44px]"
         >
@@ -58,9 +73,10 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
         className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand max-sm:min-h-[44px]"
         title="Generate an ATS-optimized CV tailored to this role"
       >
-        <FileDown className="size-3.5" /> Generate tailored CV (PDF)
+        {approving ? <Loader2 className="size-3.5 animate-spin" /> : <FileDown className="size-3.5" />} {locallyApproved ? "Generate tailored CV (PDF)" : "Approve & tailor CV"}
       </button>
       <CostBadge kind="spend" size="xs" />
+      {error && <span role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</span>}
     </span>
   );
 }

@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Application } from "@/lib/career-ops";
 import { Badge } from "@/components/ui/badge";
-import { scoreTone, scoreNum, legitimacyTone, parseReport } from "@/lib/format";
+import { scoreTone, scoreNum, legitimacyTone, parseReport, canonStatus } from "@/lib/format";
 import { cleanHeading, isVerdictHeading, splitSections } from "@/lib/report-sections.mjs";
 import { StatusSelect } from "@/components/status-select";
 import { CompanyLogo } from "@/components/company-logo";
@@ -13,6 +13,9 @@ import { GeneratePdfButton } from "@/components/generate-pdf-button";
 import { ApplyButton } from "@/components/apply-button";
 import { DeleteFromTracker } from "@/components/delete-from-tracker";
 import { companyPresentation } from "@/lib/company-presentation.mjs";
+import type { DecisionState } from "@/lib/core/decision-log";
+import { ScoreOverride } from "@/components/score-override";
+import { OutcomeRecorder } from "@/components/outcome-recorder";
 
 // Progressive disclosure of the report. The core writes prose blocks
 // "## A) Role Summary", "## B) Match with CV", then
@@ -54,6 +57,7 @@ export function ReportView({
   canDelete = false,
   pdfReadyFromIndex = false,
   coverReady = false,
+  decisionState,
 }: {
   id: string;
   app: Application | null;
@@ -67,6 +71,7 @@ export function ReportView({
    *  the page, see resolveTailoredCover). View only — covers are never generated
    *  from here. */
   coverReady?: boolean;
+  decisionState: DecisionState;
 }) {
   const meta = report ? parseReport(report) : null;
   const field = (label: string) => meta?.fields.find((f) => f.label === label)?.value;
@@ -76,6 +81,8 @@ export function ReportView({
   const url = field("URL");
   const pdfReady = (app?.pdf ?? "").includes("✅") || pdfReadyFromIndex;
   const company = app ? companyPresentation(app) : null;
+  const scoreValue = scoreNum(score ?? "");
+  const actionAllowed = Number.isFinite(scoreValue) && (scoreValue >= 4 || decisionState.overrideApproved);
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8 xl:max-w-5xl 2xl:max-w-[1600px]">
@@ -107,8 +114,10 @@ export function ReportView({
           })()}
           {meta?.legitimacy && <Badge tone={legitimacyTone(meta.legitimacy)}>{meta.legitimacy}</Badge>}
           {app && <StatusSelect n={id} current={app.status} />}
-          <GeneratePdfButton n={id} company={app?.company ?? meta?.title ?? id} pdfReady={pdfReady} />
-          <ApplyButton n={id} url={url && url.startsWith("http") ? url : undefined} company={app?.company ?? meta?.title ?? id} pdfReady={pdfReady} />
+          {actionAllowed ? <>
+            <GeneratePdfButton n={id} company={app?.company ?? meta?.title ?? id} pdfReady={pdfReady} approved={decisionState.tailoringApproved} />
+            <ApplyButton n={id} url={url && url.startsWith("http") ? url : undefined} company={app?.company ?? meta?.title ?? id} pdfReady={pdfReady} approved={decisionState.applicationApproved} />
+          </> : <ScoreOverride n={id} />}
           {coverReady && (
             <a
               href={`/api/cover-pdf?application=${encodeURIComponent(id)}`}
@@ -119,11 +128,33 @@ export function ReportView({
               <FileText className="size-3.5" /> View cover
             </a>
           )}
+          {app && /applied|responded|interview|offer|hired|rejected/i.test(app.status) && <OutcomeRecorder n={id} />}
         </div>
 
         {app && canDelete && (
           <div className="mt-3">
             <DeleteFromTracker n={id} />
+          </div>
+        )}
+
+        {app && (
+          <div className="mt-4 rounded-xl border border-border bg-surface/30 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Application workflow</p>
+            <ol className="mt-2 flex flex-wrap gap-1.5 text-xs">
+              {[
+                ["Evaluated", true],
+                [scoreValue >= 4 ? "Recommended" : decisionState.overrideApproved ? "Override approved" : "Hold / reject", scoreValue >= 4 || decisionState.overrideApproved],
+                ["Tailoring approved", decisionState.tailoringApproved],
+                ["Pack ready", pdfReady],
+                ["Application approved", decisionState.applicationApproved],
+                ["Form prepared", decisionState.formPrepared],
+                ["Submitted by you", ["APPLIED", "RESPONDED", "INTERVIEW", "OFFER", "HIRED"].some((s) => canonStatus(app.status).includes(s))],
+              ].map(([label, done], index) => (
+                <li key={String(label)} className={`rounded-full border px-2.5 py-1 ${done ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "border-border text-faint"}`}>
+                  <span className="mr-1 tabular-nums">{index + 1}.</span>{label}
+                </li>
+              ))}
+            </ol>
           </div>
         )}
 

@@ -39,7 +39,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
-import { companyRoleDedupKey, collectSeenCompanyRoles, loadSeenCompanyRoles } from '../scan.mjs';
+import { companyRoleDedupKey, collectSeenCompanyRoles, loadSeenCompanyRoles, locationsEquivalentForDedup } from '../scan.mjs';
 
 console.log('\nscan.mjs — opt-in location-aware company+role dedupe');
 
@@ -63,6 +63,20 @@ const BARE = companyRoleDedupKey(CO, ROLE);
   } else {
     fail(`bare key shape changed: ${JSON.stringify(BARE)}`);
   }
+}
+
+// Cross-source location labels may differ in precision without describing a
+// different vacancy. Preserve genuinely different cities while matching the
+// two live duplicate shapes found in Mohamed's pipeline.
+{
+  const cases = [
+    ['Egypt', 'Cairo, Egypt'],
+    ['Abu Dhabi, UAE', 'Abu Dhabi, Abu Dhabi Emirate, United Arab Emirates'],
+  ];
+  if (cases.every(([a, b]) => locationsEquivalentForDedup(a, b))) pass('equivalent cross-source geography labels dedupe');
+  else fail('equivalent cross-source geography labels did not dedupe');
+  if (!locationsEquivalentForDedup('London, UK', 'Dublin, UK')) pass('distinct cities remain distinct');
+  else fail('distinct cities collapsed during location comparison');
 }
 
 // ── 2. A supplied location joins the key ────────────────────────────────────
