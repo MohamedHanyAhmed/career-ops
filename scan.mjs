@@ -2987,7 +2987,10 @@ async function main() {
   const config = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
   const companies = Array.isArray(config.tracked_companies) ? config.tracked_companies : [];
   const boards = Array.isArray(config.job_boards) ? config.job_boards : [];
-  const titleFilter = buildTitleFilter(config.title_filter);
+  const titleFilter = buildTitleFilterWithOverrides(
+    config.title_filter,
+    buildTitleFilterOverrides(config.title_filter_overrides),
+  );
 
   // Seniority tier classifier integration
   let classifyTier = null;
@@ -3239,7 +3242,7 @@ async function main() {
           }
         }
 
-        if (!titleFilter(job.title)) {
+        if (!titleFilter(job.title, company.name)) {
           totalFilteredTitle++;
           continue;
         }
